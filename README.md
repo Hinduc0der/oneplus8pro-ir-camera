@@ -1,4 +1,6 @@
-# OnePlus 8 Pro — hidden color-filter / IR camera (cameraId 4)
+# oneplus8pro-ir-camera — unlock the hidden color-filter / IR sensor (cameraId 4)
+
+> 🇷🇺 **[Русская версия →](README.ru.md)** · 🇬🇧 English (this file).
 
 Unlock and shoot with the **5 MP "color filter" sensor** on the OnePlus 8 Pro (IN2020) — the
 fourth rear camera that OnePlus marketed as **"Photochrom"** and then disabled with an OTA in 2020.
@@ -25,7 +27,12 @@ On Android 10+ the extra physical sensors of a multi-camera device are hidden be
 is to be installed as a **privileged app** (`/system/priv-app`) with an allow-list entry. That is
 exactly what the Magisk module does — no firmware patching, fully reversible.
 
----
+## How it differs from stock "Photochrom"
+
+The stock camera's Photochrom is **RTB (real-time blending)**: it keeps shooting on the **main**
+48 MP sensor and just blends in a tint, so the geometry, viewpoint and EXIF are the main lens'.
+This project opens the **dedicated** color-filter sensor (`cameraId 4`) on its own — its real
+2592×1944 frame, its own slightly shifted viewpoint, and the raw cold-blue false-color response.
 
 ## Install (recommended: flashable Magisk module)
 
@@ -68,8 +75,6 @@ adb reboot
 adb shell su -c 'pm grant com.irmono.cam android.permission.CAMERA'
 ```
 
----
-
 ## How it works
 
 Two small pieces:
@@ -104,8 +109,6 @@ Because the APK sits in `/system/priv-app`, PackageManager reads this file at bo
 
 `cameraId 4` is the sensor this project targets.
 
----
-
 ## Build from source
 
 The app is deliberately buildable with just the Android SDK command-line tools (no Gradle).
@@ -125,8 +128,6 @@ apksigner sign --ks debug.keystore ... irmono-aligned.apk   # -> IRMono.apk
 See [`app/BUILD.md`](app/BUILD.md) for the exact commands and the two gotchas that bite
 (32-bit `JAVA_HOME` breaks `d8`; `-bootclasspath` vs `--release`).
 
----
-
 ## Compatibility
 
 - **Confirmed:** OnePlus 8 Pro **IN2020**, ColorOS 13.1.0.187 CN.
@@ -144,30 +145,12 @@ See [`app/BUILD.md`](app/BUILD.md) for the exact commands and the two gotchas th
 - The app is signed with a throwaway debug key. Rebuild from source if you don't want to trust the
   prebuilt APK — that is exactly why the source is here.
 
+## Credits
+
+Code written by Claude (Anthropic); the device owner set the goal, reverse-engineered the camera
+behavior together with it, and tested every build on the real phone.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). The app code is original; the Magisk `update-binary` is the standard
 template from the Magisk project.
-
----
-
-## По-русски (кратко)
-
-У OnePlus 8 Pro есть **4-й задний сенсор — 5 Мп «цветной фильтр» (Photochrom)**, который OnePlus
-отключил обновлением в 2020. Штатный «Photochrom» — это подмешивание (RTB) к картинке **главного**
-сенсора, а не съёмка с самого модуля. Этот проект даёт маленькое привилегированное приложение
-**IRMono**, которое открывает именно этот сенсор напрямую (`cameraId 4`): живое превью + сохранение
-кадров **2592×1944** в `DCIM/IRMono/`. Через него ярко виден ИК-светодиод пульта от телевизора,
-невидимый глазу; картинка — характерного сине-холодного false-color.
-
-Почему нужен root: с Android 10 лишние физические сенсоры скрыты за разрешением `SYSTEM_CAMERA`,
-которое получает только **priv-app** из `/system/priv-app` по allow-list. Поэтому — Magisk-модуль,
-без правки прошивки, полностью обратимо.
-
-**Установка:** скачать zip из [Releases](../../releases) → Magisk → «Модули» → «Установить из
-хранилища» → перезагрузка → открыть «IR Camera» из меню, разрешить камеру. Откат — выключить модуль
-в Magisk и перезагрузиться.
-
-Проверено на **OnePlus 8 Pro IN2020, ColorOS 13.1.0.187 CN**. На глобальном OxygenOS, скорее всего,
-тоже заработает (железо то же), но не проверялось; если `cameraId 4` окажется не тем — пролистать
-кнопкой **СЕНСОР ▸** до сине-холодной картинки.
