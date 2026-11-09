@@ -6,8 +6,8 @@ Unlock and shoot with the **5 MP "color filter" sensor** on the OnePlus 8 Pro (I
 fourth rear camera that OnePlus marketed as **"Photochrom"** and then disabled with an OTA in 2020.
 
 This repo ships a tiny privileged camera app (**IRMono**) and a **flashable Magisk module** that
-lets the app open that sensor directly (`cameraId 4`), show a live preview and save full-resolution
-**2592×1944** stills. Unlike the stock "Photochrom" filter — which is real-time blending (RTB) that
+lets the app open that sensor directly (`cameraId 4`), show a live preview, save full-resolution
+**2592×1944** stills and **record video**. Unlike the stock "Photochrom" filter — which is real-time blending (RTB) that
 just tints the **main** sensor's image — this reads the dedicated sensor itself, with its own
 viewpoint and characteristic cold blue/false-color response. A TV-remote IR LED, invisible to the
 eye, lights up brightly through it.
@@ -47,6 +47,7 @@ This project opens the **dedicated** color-filter sensor (`cameraId 4`) on its o
 4. Open **"IR Camera"** from the app drawer. Tap **Allow** when it asks for the Camera permission.
 5. The preview opens on `cam 4` (label top-left shows `cam 4   2592×1944`).
    - **СНЯТЬ / SHOOT** — save a still to `DCIM/IRMono/`.
+   - **ВИДЕО / VIDEO** — record a clip to `DCIM/IRMono/` (tap again to stop; mic audio if granted).
    - **СЕНСОР / SENSOR ▸** — cycle through the other sensors.
 
 **Uninstall:** Magisk app → Modules → toggle *IR Camera* off (or delete) → reboot. Nothing in the

@@ -12,10 +12,12 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.util.Size;
 import android.view.Gravity;
@@ -43,11 +45,19 @@ public class MainActivity extends Activity {
     private ImageReader reader;
     private TextureView texture;
     private TextView label;
+    private Button shot, next, video;
     private Handler bg;
     private HandlerThread bgThread;
     private Size jpegSize;
+    private Size videoSize;
     private Surface previewSurface;
     private boolean opening = false;
+
+    private MediaRecorder recorder;
+    private boolean recording = false;
+    private Surface recorderSurface;
+    private Uri videoUri;
+    private ParcelFileDescriptor videoPfd;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -65,14 +75,22 @@ public class MainActivity extends Activity {
         lp.gravity = Gravity.TOP | Gravity.START;
         root.addView(label, lp);
 
-        Button shot = new Button(this);
+        shot = new Button(this);
         shot.setText("СНЯТЬ");
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(-2, -2);
         sp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
         sp.bottomMargin = 90;
         root.addView(shot, sp);
 
-        Button next = new Button(this);
+        video = new Button(this);
+        video.setText("ВИДЕО");
+        FrameLayout.LayoutParams vp = new FrameLayout.LayoutParams(-2, -2);
+        vp.gravity = Gravity.BOTTOM | Gravity.START;
+        vp.bottomMargin = 90;
+        vp.leftMargin = 28;
+        root.addView(video, vp);
+
+        next = new Button(this);
         next.setText("СЕНСОР ▸");
         FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-2, -2);
         np.gravity = Gravity.BOTTOM | Gravity.END;
@@ -81,9 +99,10 @@ public class MainActivity extends Activity {
         root.addView(next, np);
         setContentView(root);
 
-        shot.setOnClickListener(v -> capture());
+        shot.setOnClickListener(v -> { if (!recording) capture(); });
+        video.setOnClickListener(v -> { if (recording) stopVideo(); else startVideo(); });
         next.setOnClickListener(v -> {
-            if (ids.isEmpty()) return;
+            if (recording || ids.isEmpty()) return;
             idx = (idx + 1) % ids.size();
             camId = ids.get(idx);
             reopen();
@@ -111,8 +130,13 @@ public class MainActivity extends Activity {
             public void onSurfaceTextureUpdated(SurfaceTexture s) {}
         });
 
+        List<String> need = new ArrayList<>();
         if (checkSelfPermission(android.Manifest.permission.CAMERA) != 0)
-            requestPermissions(new String[]{android.Manifest.permission.CAMERA}, 1);
+            need.add(android.Manifest.permission.CAMERA);
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != 0)
+            need.add(android.Manifest.permission.RECORD_AUDIO);
+        if (!need.isEmpty())
+            requestPermissions(need.toArray(new String[0]), 1);
     }
 
     private String chooseTarget(List<String> all) {
@@ -151,6 +175,7 @@ public class MainActivity extends Activity {
             Size[] js = m.getOutputSizes(ImageFormat.JPEG);
             jpegSize = js[0];
             for (Size s : js) if (s.getWidth() * s.getHeight() > jpegSize.getWidth() * jpegSize.getHeight()) jpegSize = s;
+            videoSize = chooseVideoSize(m.getOutputSizes(MediaRecorder.class));
             runOnUiThread(() -> label.setText("cam " + camId + "   " + jpegSize.getWidth() + "x" + jpegSize.getHeight()));
             reader = ImageReader.newInstance(jpegSize.getWidth(), jpegSize.getHeight(), ImageFormat.JPEG, 2);
             reader.setOnImageAvailableListener(this::save, bg);
@@ -163,6 +188,19 @@ public class MainActivity extends Activity {
             opening = false;
             toast("openCam: " + e);
         }
+    }
+
+    private Size chooseVideoSize(Size[] vs) {
+        if (vs == null || vs.length == 0) return null;
+        Size pick = null;
+        for (Size s : vs) {
+            if (s.getWidth() > 1920) continue;
+            if (pick == null || s.getWidth() * s.getHeight() > pick.getWidth() * pick.getHeight()) pick = s;
+        }
+        if (pick != null) return pick;
+        Size small = vs[0];
+        for (Size s : vs) if (s.getWidth() * s.getHeight() < small.getWidth() * small.getHeight()) small = s;
+        return small;
     }
 
     private void startPreview() {
@@ -218,7 +256,123 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ───────────────────────── video ─────────────────────────
+
+    private void startVideo() {
+        if (recording || device == null) { toast("камера не готова"); return; }
+        if (videoSize == null) { toast("этот сенсор не умеет видео"); return; }
+        try {
+            setupRecorder();
+            recorderSurface = recorder.getSurface();
+            try { if (session != null) session.close(); } catch (Exception e) {}
+            session = null;
+            List<Surface> outs = Arrays.asList(previewSurface, recorderSurface);
+            device.createCaptureSession(outs, new CameraCaptureSession.StateCallback() {
+                public void onConfigured(CameraCaptureSession s) {
+                    session = s;
+                    try {
+                        CaptureRequest.Builder b = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+                        b.addTarget(previewSurface);
+                        b.addTarget(recorderSurface);
+                        s.setRepeatingRequest(b.build(), null, bg);
+                        recorder.start();
+                        recording = true;
+                        runOnUiThread(() -> { video.setText("СТОП ■"); label.setText("cam " + camId + "   ● запись " + videoSize.getWidth() + "x" + videoSize.getHeight()); });
+                    } catch (Exception e) { toast("rec start: " + e); abortRecorder(); }
+                }
+                public void onConfigureFailed(CameraCaptureSession s) { toast("rec session fail"); abortRecorder(); }
+            }, bg);
+        } catch (Exception e) {
+            toast("startVideo: " + e);
+            abortRecorder();
+        }
+    }
+
+    private void setupRecorder() throws Exception {
+        boolean audio = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == 0;
+        String name = "IRMONO_" + System.currentTimeMillis() + ".mp4";
+        ContentValues cv = new ContentValues();
+        cv.put(MediaStore.Video.Media.DISPLAY_NAME, name);
+        cv.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+        cv.put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/IRMono");
+        cv.put(MediaStore.Video.Media.IS_PENDING, 1);
+        videoUri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, cv);
+        if (videoUri == null) throw new Exception("MediaStore insert == null");
+        videoPfd = getContentResolver().openFileDescriptor(videoUri, "w");
+
+        recorder = new MediaRecorder();
+        if (audio) recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+        recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+        recorder.setOutputFile(videoPfd.getFileDescriptor());
+        recorder.setVideoEncodingBitRate(10_000_000);
+        recorder.setVideoFrameRate(30);
+        recorder.setVideoSize(videoSize.getWidth(), videoSize.getHeight());
+        recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
+        if (audio) {
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            recorder.setAudioEncodingBitRate(128_000);
+            recorder.setAudioSamplingRate(44100);
+        }
+        recorder.setOrientationHint(90);
+        recorder.prepare();
+    }
+
+    private void stopVideo() {
+        recording = false;
+        boolean ok = true;
+        try { if (session != null) session.stopRepeating(); } catch (Exception e) {}
+        try { if (recorder != null) recorder.stop(); } catch (Exception e) { ok = false; }
+        try { if (recorder != null) recorder.reset(); } catch (Exception e) {}
+        try { if (recorder != null) recorder.release(); } catch (Exception e) {}
+        recorder = null;
+        try { if (videoPfd != null) videoPfd.close(); } catch (Exception e) {}
+        videoPfd = null;
+        if (videoUri != null) {
+            if (ok) {
+                ContentValues cv = new ContentValues();
+                cv.put(MediaStore.Video.Media.IS_PENDING, 0);
+                getContentResolver().update(videoUri, cv, null, null);
+                toast("видео сохранено: DCIM/IRMono");
+            } else {
+                getContentResolver().delete(videoUri, null, null);
+                toast("видео слишком короткое — отменено");
+            }
+        }
+        videoUri = null;
+        recorderSurface = null;
+        runOnUiThread(() -> video.setText("ВИДЕО"));
+        // вернуться к превью + фото
+        try { if (session != null) session.close(); } catch (Exception e) {}
+        session = null;
+        if (device != null) startPreview();
+    }
+
+    private void abortRecorder() {
+        recording = false;
+        try { if (recorder != null) { recorder.reset(); recorder.release(); } } catch (Exception e) {}
+        recorder = null;
+        try { if (videoPfd != null) videoPfd.close(); } catch (Exception e) {}
+        videoPfd = null;
+        if (videoUri != null) { try { getContentResolver().delete(videoUri, null, null); } catch (Exception e) {} }
+        videoUri = null;
+        recorderSurface = null;
+        runOnUiThread(() -> video.setText("ВИДЕО"));
+        if (device != null) startPreview();
+    }
+
     private void closeCam() {
+        if (recording) { try { if (recorder != null) { recorder.stop(); recorder.reset(); recorder.release(); } } catch (Exception e) {}
+            recorder = null; recording = false;
+            if (videoUri != null) {
+                ContentValues cv = new ContentValues();
+                cv.put(MediaStore.Video.Media.IS_PENDING, 0);
+                try { getContentResolver().update(videoUri, cv, null, null); } catch (Exception e) {}
+                videoUri = null;
+            }
+            try { if (videoPfd != null) videoPfd.close(); } catch (Exception e) {}
+            videoPfd = null;
+        }
         try { if (session != null) session.close(); } catch (Exception e) {}
         try { if (device != null) device.close(); } catch (Exception e) {}
         try { if (reader != null) reader.close(); } catch (Exception e) {}
