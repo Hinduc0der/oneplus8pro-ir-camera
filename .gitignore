@@ -1,0 +1,12 @@
+# Prebuilt binaries live in GitHub Releases, not in git
+*.apk
+*.idsig
+dist/
+
+# Build intermediates
+base.apk
+irmono-aligned.apk
+classes/
+classes.dex
+gen/
+*.keystore
